@@ -43,7 +43,7 @@ class TransformerInvokerTest extends Specification {
     def artifactTransformListener = Mock(ArtifactTransformListener)
     def historyRepository = Mock(TransformerExecutionHistoryRepository)
     def outputFileCollectionFingerprinter = Mock(OutputFileCollectionFingerprinter)
-    def transformerInvoker = new DefaultTransformerInvoker(workExecutor, snapshotter, artifactTransformListener, historyRepository, outputFileCollectionFingerprinter)
+    def transformerInvoker = new DefaultTransformerInvoker(workExecutor, snapshotter, artifactTransformListener, historyRepository, outputFileCollectionFingerprinter, projectFinder)
 
     def "wraps failures into TransformInvocationException"() {
         def failure = new RuntimeException()

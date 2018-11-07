@@ -25,7 +25,6 @@ import org.gradle.internal.fingerprint.CurrentFileCollectionFingerprint;
 import org.gradle.internal.hash.HashCode;
 import org.gradle.internal.snapshot.impl.ImplementationSnapshot;
 
-import java.io.File;
 import java.util.Optional;
 
 public class DefaultTransformerExecutionHistoryRepository implements TransformerExecutionHistoryRepository {
@@ -44,12 +43,12 @@ public class DefaultTransformerExecutionHistoryRepository implements Transformer
     }
 
     @Override
-    public void persist(HashCode cacheKey, OriginMetadata originMetadata, ImplementationSnapshot implementationSnapshot, ImmutableSortedMap<String, CurrentFileCollectionFingerprint> outputFingerprints, boolean successful) {
-        executionHistoryStore.store(cacheKey.toString(), originMetadata, implementationSnapshot, ImmutableList.of(), ImmutableSortedMap.of(), ImmutableSortedMap.of(), outputFingerprints, successful);
+    public TransformerWorkspaceProvider getGradleUserHomeWorkspaceProvider() {
+        return workspaceProvider;
     }
 
     @Override
-    public File getWorkspace(File toBeTransformed, HashCode cacheKey) {
-        return workspaceProvider.getWorkspace(toBeTransformed, cacheKey);
+    public void persist(HashCode cacheKey, OriginMetadata originMetadata, ImplementationSnapshot implementationSnapshot, ImmutableSortedMap<String, CurrentFileCollectionFingerprint> outputFingerprints, boolean successful) {
+        executionHistoryStore.store(cacheKey.toString(), originMetadata, implementationSnapshot, ImmutableList.of(), ImmutableSortedMap.of(), ImmutableSortedMap.of(), outputFingerprints, successful);
     }
 }

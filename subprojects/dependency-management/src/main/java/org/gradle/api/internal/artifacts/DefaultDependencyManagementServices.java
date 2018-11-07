@@ -16,6 +16,7 @@
 package org.gradle.api.internal.artifacts;
 
 import org.gradle.StartParameter;
+import org.gradle.api.Describable;
 import org.gradle.api.artifacts.ConfigurablePublishArtifact;
 import org.gradle.api.artifacts.dsl.ArtifactHandler;
 import org.gradle.api.artifacts.dsl.ComponentMetadataHandler;
@@ -65,10 +66,13 @@ import org.gradle.api.internal.artifacts.repositories.DefaultBaseRepositoryFacto
 import org.gradle.api.internal.artifacts.repositories.metadata.IvyMutableModuleMetadataFactory;
 import org.gradle.api.internal.artifacts.repositories.metadata.MavenMutableModuleMetadataFactory;
 import org.gradle.api.internal.artifacts.repositories.transport.RepositoryTransportFactory;
+import org.gradle.api.internal.artifacts.transform.ArtifactTransformListener;
 import org.gradle.api.internal.artifacts.transform.ConsumerProvidedVariantFinder;
 import org.gradle.api.internal.artifacts.transform.DefaultArtifactTransforms;
+import org.gradle.api.internal.artifacts.transform.DefaultTransformerInvoker;
 import org.gradle.api.internal.artifacts.transform.DefaultVariantTransformRegistry;
 import org.gradle.api.internal.artifacts.transform.ProjectTransformerWorkspaceProvider;
+import org.gradle.api.internal.artifacts.transform.TransformerExecutionHistoryRepository;
 import org.gradle.api.internal.artifacts.transform.TransformerInvoker;
 import org.gradle.api.internal.artifacts.transform.TransformerWorkspaceProvider;
 import org.gradle.api.internal.artifacts.type.ArtifactTypeRegistry;
@@ -86,6 +90,7 @@ import org.gradle.api.internal.project.ProjectStateRegistry;
 import org.gradle.api.internal.tasks.TaskResolver;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.initialization.ProjectAccessListener;
+import org.gradle.initialization.RootBuildLifecycleListener;
 import org.gradle.internal.authentication.AuthenticationSchemeRegistry;
 import org.gradle.internal.build.BuildState;
 import org.gradle.internal.classloader.ClassLoaderHierarchyHasher;
@@ -94,6 +99,25 @@ import org.gradle.internal.component.external.ivypublish.DefaultIvyModuleDescrip
 import org.gradle.internal.component.external.model.ModuleComponentArtifactMetadata;
 import org.gradle.internal.component.model.ComponentAttributeMatcher;
 import org.gradle.internal.event.ListenerManager;
+import org.gradle.internal.execution.OutputChangeListener;
+import org.gradle.internal.execution.Result;
+import org.gradle.internal.execution.WorkExecutor;
+import org.gradle.internal.execution.history.OutputFilesRepository;
+import org.gradle.internal.execution.impl.DefaultWorkExecutor;
+import org.gradle.internal.execution.impl.steps.CatchExceptionStep;
+import org.gradle.internal.execution.impl.steps.Context;
+import org.gradle.internal.execution.impl.steps.CreateOutputsStep;
+import org.gradle.internal.execution.impl.steps.CurrentSnapshotResult;
+import org.gradle.internal.execution.impl.steps.ExecuteStep;
+import org.gradle.internal.execution.impl.steps.PrepareCachingStep;
+import org.gradle.internal.execution.impl.steps.SkipUpToDateStep;
+import org.gradle.internal.execution.impl.steps.SnapshotOutputStep;
+import org.gradle.internal.execution.impl.steps.StoreSnapshotsStep;
+import org.gradle.internal.execution.impl.steps.TimeoutStep;
+import org.gradle.internal.execution.impl.steps.UpToDateResult;
+import org.gradle.internal.execution.timeout.TimeoutHandler;
+import org.gradle.internal.fingerprint.impl.OutputFileCollectionFingerprinter;
+import org.gradle.internal.id.UniqueId;
 import org.gradle.internal.isolation.IsolatableFactory;
 import org.gradle.internal.locking.DefaultDependencyLockingHandler;
 import org.gradle.internal.locking.DefaultDependencyLockingProvider;
@@ -107,10 +131,13 @@ import org.gradle.internal.resource.local.LocallyAvailableResourceFinder;
 import org.gradle.internal.service.DefaultServiceRegistry;
 import org.gradle.internal.service.ServiceRegistration;
 import org.gradle.internal.service.ServiceRegistry;
+import org.gradle.internal.snapshot.FileSystemSnapshot;
+import org.gradle.internal.snapshot.FileSystemSnapshotter;
 import org.gradle.internal.typeconversion.NotationParser;
 import org.gradle.util.internal.SimpleMapInterner;
 import org.gradle.vcs.internal.VcsMappingsStore;
 
+import java.io.File;
 import java.util.List;
 
 public class DefaultDependencyManagementServices implements DependencyManagementServices {
@@ -127,12 +154,68 @@ public class DefaultDependencyManagementServices implements DependencyManagement
         services.add(DependencyMetaDataProvider.class, dependencyMetaDataProvider);
         services.add(ProjectFinder.class, projectFinder);
         services.add(DomainObjectContext.class, domainObjectContext);
+        services.addProvider(new ArtifactTransformResolutionGradleUserHomeServices());
         services.addProvider(new DependencyResolutionScopeServices());
         return services.get(DependencyResolutionServices.class);
     }
 
     public void addDslServices(ServiceRegistration registration) {
         registration.addProvider(new DependencyResolutionScopeServices());
+    }
+
+    private static class ArtifactTransformResolutionGradleUserHomeServices {
+
+        ArtifactTransformListener createArtifactTransformListener() {
+            return new ArtifactTransformListener() {
+                @Override
+                public void beforeTransformerInvocation(Describable transformer, Describable subject) {
+                }
+
+                @Override
+                public void afterTransformerInvocation(Describable transformer, Describable subject) {
+                }
+            };
+        }
+
+        /**
+         * Work executer for usage above Gradle scope
+         *
+         * Currently used for running artifact transformations in buildscript blocks.
+         */
+        WorkExecutor<UpToDateResult> createWorkExecutor(
+            TimeoutHandler timeoutHandler, ListenerManager listenerManager
+        ) {
+            OutputChangeListener outputChangeListener = listenerManager.getBroadcaster(OutputChangeListener.class);
+            OutputFilesRepository noopOutputFilesRepository = new OutputFilesRepository() {
+                @Override
+                public boolean isGeneratedByGradle(File file) {
+                    return true;
+                }
+
+                @Override
+                public void recordOutputs(Iterable<? extends FileSystemSnapshot> outputFileFingerprints) {
+                }
+            };
+            // TODO: Figure out how to get rid of origin scope id in snapshot outputs step
+            UniqueId fixedUniqueId = UniqueId.from("dhwwyv4tqrd43cbxmdsf24wquu");
+            return new DefaultWorkExecutor<UpToDateResult>(
+                new SkipUpToDateStep<Context>(
+                    new StoreSnapshotsStep<Context>(noopOutputFilesRepository,
+                        new PrepareCachingStep<Context, CurrentSnapshotResult>(
+                            new SnapshotOutputStep<Context>(fixedUniqueId,
+                                new CreateOutputsStep<Context, Result>(
+                                    new CatchExceptionStep<Context>(
+                                        new TimeoutStep<Context>(timeoutHandler,
+                                            new ExecuteStep(outputChangeListener)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            );
+        }
     }
 
     private static class DependencyResolutionScopeServices {
@@ -143,6 +226,23 @@ public class DefaultDependencyManagementServices implements DependencyManagement
 
         TransformerWorkspaceProvider createTransformerWorkspaceProvider(ProjectLayout projectLayout) {
             return new ProjectTransformerWorkspaceProvider(projectLayout);
+        }
+
+
+        TransformerInvoker createTransformerInvoker(WorkExecutor<UpToDateResult> workExecutor,
+                                                    FileSystemSnapshotter fileSystemSnapshotter, TransformerExecutionHistoryRepository historyRepository, ListenerManager listenerManager, ArtifactTransformListener artifactTransformListener, OutputFileCollectionFingerprinter outputFileCollectionFingerprinter, ProjectFinder projectFinder) {
+            DefaultTransformerInvoker transformerInvoker = new DefaultTransformerInvoker(workExecutor, fileSystemSnapshotter, artifactTransformListener, historyRepository, outputFileCollectionFingerprinter, projectFinder);
+            listenerManager.addListener(new RootBuildLifecycleListener() {
+                @Override
+                public void afterStart() {
+                }
+
+                @Override
+                public void beforeComplete() {
+                    transformerInvoker.clearInMemoryCache();
+                }
+            });
+            return transformerInvoker;
         }
 
         VariantTransformRegistry createVariantTransforms(InstantiatorFactory instantiatorFactory, ImmutableAttributesFactory attributesFactory, IsolatableFactory isolatableFactory, ClassLoaderHierarchyHasher classLoaderHierarchyHasher, TransformerInvoker transformerInvoker) {

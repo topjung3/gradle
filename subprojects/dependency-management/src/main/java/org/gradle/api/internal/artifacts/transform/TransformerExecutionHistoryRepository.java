@@ -23,11 +23,10 @@ import org.gradle.internal.fingerprint.CurrentFileCollectionFingerprint;
 import org.gradle.internal.hash.HashCode;
 import org.gradle.internal.snapshot.impl.ImplementationSnapshot;
 
-import java.io.File;
 import java.util.Optional;
 
 public interface TransformerExecutionHistoryRepository {
     Optional<AfterPreviousExecutionState> getPreviousExecution(HashCode cacheKey);
-    File getWorkspace(File toBeTransformed, HashCode cacheKey);
+    TransformerWorkspaceProvider getGradleUserHomeWorkspaceProvider();
     void persist(HashCode cacheKey, OriginMetadata originMetadata, ImplementationSnapshot implementationSnapshot, ImmutableSortedMap<String, CurrentFileCollectionFingerprint> outputFingerprints, boolean successful);
 }

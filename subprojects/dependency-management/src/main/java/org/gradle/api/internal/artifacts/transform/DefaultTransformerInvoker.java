@@ -22,7 +22,9 @@ import org.gradle.api.Describable;
 import org.gradle.api.artifacts.transform.TransformInvocationException;
 import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.RelativePath;
+import org.gradle.api.internal.artifacts.dsl.dependencies.ProjectFinder;
 import org.gradle.api.internal.file.collections.ImmutableFileCollection;
+import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.cache.internal.ProducerGuard;
 import org.gradle.caching.BuildCacheKey;
 import org.gradle.caching.internal.origin.OriginMetadata;
@@ -72,16 +74,18 @@ public class DefaultTransformerInvoker implements TransformerInvoker {
     private final ArtifactTransformListener artifactTransformListener;
     private final TransformerExecutionHistoryRepository historyRepository;
     private final OutputFileCollectionFingerprinter outputFileCollectionFingerprinter;
+    private final ProjectFinder projectFinder;
 
     public DefaultTransformerInvoker(WorkExecutor<UpToDateResult> workExecutor,
                                      FileSystemSnapshotter fileSystemSnapshotter,
                                      ArtifactTransformListener artifactTransformListener,
-                                     TransformerExecutionHistoryRepository historyRepository, OutputFileCollectionFingerprinter outputFileCollectionFingerprinter) {
+                                     TransformerExecutionHistoryRepository historyRepository, OutputFileCollectionFingerprinter outputFileCollectionFingerprinter, ProjectFinder projectFinder) {
         this.workExecutor = workExecutor;
         this.fileSystemSnapshotter = fileSystemSnapshotter;
         this.artifactTransformListener = artifactTransformListener;
         this.historyRepository = historyRepository;
         this.outputFileCollectionFingerprinter = outputFileCollectionFingerprinter;
+        this.projectFinder = projectFinder;
     }
 
     public void clearInMemoryCache() {
@@ -104,7 +108,7 @@ public class DefaultTransformerInvoker implements TransformerInvoker {
         return new TransformInvocationException(invocation.getPrimaryInput().getAbsoluteFile(), invocation.getTransformer().getImplementationClass(), originalFailure);
     }
 
-    private Try<ImmutableList<File>> invoke(File primaryInput, Transformer transformer, Describable subject) {
+    private Try<ImmutableList<File>> invoke(File primaryInput, Transformer transformer, TransformationSubject subject) {
         CacheKey cacheKey = getCacheKey(primaryInput, transformer);
         ImmutableList<File> results = resultHashToResult.get(cacheKey);
         if (results != null) {
@@ -112,13 +116,23 @@ public class DefaultTransformerInvoker implements TransformerInvoker {
         }
         return fireTransformListeners(transformer, subject, () -> {
             HashCode persistentCacheKey = cacheKey.getPersistentCacheKey();
-            File workspace = historyRepository.getWorkspace(primaryInput, persistentCacheKey);
+            File workspace = determineWorkspace(primaryInput, persistentCacheKey, subject);
             TransformerExecution execution = new TransformerExecution(primaryInput, transformer, persistentCacheKey, workspace);
             UpToDateResult outcome = producing.guardByKey(cacheKey, () -> workExecutor.execute(execution));
             Try<ImmutableList<File>> result = execution.getResult(outcome);
             result.ifSuccessful(transformerResult -> resultHashToResult.put(cacheKey, transformerResult));
             return result;
         });
+    }
+
+    private File determineWorkspace(File primaryInput, HashCode persistentCacheKey, TransformationSubject subject) {
+        Optional<ProjectInternal> producerProject = subject.getProducer()
+            .filter(identifier -> identifier.getBuild().isCurrentBuild())
+            .map(identifier -> projectFinder.findProject(identifier.getProjectPath()));
+        TransformerWorkspaceProvider workspaceProvider = producerProject
+            .map(project -> project.getServices().get(TransformerWorkspaceProvider.class))
+            .orElse(historyRepository.getGradleUserHomeWorkspaceProvider());
+        return workspaceProvider.getWorkspace(primaryInput, persistentCacheKey);
     }
 
     private Try<ImmutableList<File>> fireTransformListeners(Transformer transformer, Describable subject, Supplier<Try<ImmutableList<File>>> execution) {
