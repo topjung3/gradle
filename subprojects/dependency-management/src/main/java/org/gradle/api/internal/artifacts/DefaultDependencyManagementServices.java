@@ -25,6 +25,7 @@ import org.gradle.api.artifacts.dsl.DependencyHandler;
 import org.gradle.api.artifacts.dsl.DependencyLockingHandler;
 import org.gradle.api.artifacts.dsl.RepositoryHandler;
 import org.gradle.api.attributes.AttributesSchema;
+import org.gradle.api.file.ProjectLayout;
 import org.gradle.api.internal.DocumentationRegistry;
 import org.gradle.api.internal.DomainObjectContext;
 import org.gradle.api.internal.FeaturePreviews;
@@ -64,10 +65,12 @@ import org.gradle.api.internal.artifacts.repositories.DefaultBaseRepositoryFacto
 import org.gradle.api.internal.artifacts.repositories.metadata.IvyMutableModuleMetadataFactory;
 import org.gradle.api.internal.artifacts.repositories.metadata.MavenMutableModuleMetadataFactory;
 import org.gradle.api.internal.artifacts.repositories.transport.RepositoryTransportFactory;
-import org.gradle.api.internal.artifacts.transform.TransformerInvoker;
 import org.gradle.api.internal.artifacts.transform.ConsumerProvidedVariantFinder;
 import org.gradle.api.internal.artifacts.transform.DefaultArtifactTransforms;
 import org.gradle.api.internal.artifacts.transform.DefaultVariantTransformRegistry;
+import org.gradle.api.internal.artifacts.transform.ProjectTransformerWorkspaceProvider;
+import org.gradle.api.internal.artifacts.transform.TransformerInvoker;
+import org.gradle.api.internal.artifacts.transform.TransformerWorkspaceProvider;
 import org.gradle.api.internal.artifacts.type.ArtifactTypeRegistry;
 import org.gradle.api.internal.artifacts.type.DefaultArtifactTypeRegistry;
 import org.gradle.api.internal.attributes.AttributesSchemaInternal;
@@ -136,6 +139,10 @@ public class DefaultDependencyManagementServices implements DependencyManagement
 
         AttributesSchemaInternal createConfigurationAttributesSchema(InstantiatorFactory instantiatorFactory, IsolatableFactory isolatableFactory) {
             return instantiatorFactory.decorate().newInstance(DefaultAttributesSchema.class, new ComponentAttributeMatcher(), instantiatorFactory, isolatableFactory);
+        }
+
+        TransformerWorkspaceProvider createTransformerWorkspaceProvider(ProjectLayout projectLayout) {
+            return new ProjectTransformerWorkspaceProvider(projectLayout);
         }
 
         VariantTransformRegistry createVariantTransforms(InstantiatorFactory instantiatorFactory, ImmutableAttributesFactory attributesFactory, IsolatableFactory isolatableFactory, ClassLoaderHierarchyHasher classLoaderHierarchyHasher, TransformerInvoker transformerInvoker) {
