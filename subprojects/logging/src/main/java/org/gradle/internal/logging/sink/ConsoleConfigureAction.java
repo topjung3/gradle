@@ -21,9 +21,11 @@ import org.gradle.internal.logging.console.AnsiConsole;
 import org.gradle.internal.logging.console.Console;
 import org.gradle.internal.nativeintegration.console.ConsoleDetector;
 import org.gradle.internal.nativeintegration.console.ConsoleMetaData;
+import org.gradle.internal.nativeintegration.console.FallbackConsoleMetaData;
 import org.gradle.internal.nativeintegration.console.TestConsoleMetadata;
 import org.gradle.internal.nativeintegration.services.NativeServices;
 
+import javax.annotation.Nullable;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 
@@ -77,7 +79,10 @@ public class ConsoleConfigureAction {
         renderer.addPlainConsole(consoleMetaData != null && consoleMetaData.isStdOut() && consoleMetaData.isStdErr());
     }
 
-    private static void configureRichConsole(OutputEventRenderer renderer, ConsoleMetaData consoleMetaData, boolean force, boolean verbose) {
+    private static void configureRichConsole(OutputEventRenderer renderer, @Nullable ConsoleMetaData consoleMetaData, boolean force, boolean verbose) {
+        if (consoleMetaData == null) {
+            consoleMetaData = FallbackConsoleMetaData.ATTACHED;
+        }
         if (consoleMetaData.isStdOut()) {
             OutputStream originalStdOut = renderer.getOriginalStdOut();
             OutputStreamWriter outStr = new OutputStreamWriter(force ? originalStdOut : AnsiConsoleUtil.wrapOutputStream(originalStdOut));
